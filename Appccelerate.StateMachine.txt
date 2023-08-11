@@ -1,0 +1,103 @@
+我个人觉得还是用文氏图表示的集合来想状态机好点，与自动机理论不同，它的取决于业务的脑洞，连线天马行空，没有文法可言（偶尔会有），下推自动机都无法完全适配，还好是分层状态机，某些子状态机结构还是有可能被正则文法和上下文无关文法优化的。
+实验1：
+// DefineHierarchyOn 是分层状态机的意思，Wiki上可查。这里有点东西的是它的HistoryType
+// 实验设计：
+// 给出一个子类状态：A={B->C->D}类内的转移都是epsilon转移，为了观察HistoryType的作用，定义一个类外的状态E->C它通过一个Trans条件进入 A 类
+// 当HistoryType = Deep时，然后根据HistoryType执行遍历（根节点R -> R类中上一个激活的状态K1 -> K1类中上一个激活的状态K2 -> 直到遍历结束）
+// 当HistoryType = Shallow时，执行遍历（根节点R -> R类中上一个激活的状态K1 -> K1类中的初始状态K2 -> K2类中的初始状态K3 -> 直到遍历结束）
+// 当HistoryType = None时，执行遍历（根节点R -> R类中的初始状态K1 -> K1类中的初始状态K2 -> K2类中的初始状态K3 -> 直到遍历结束）
+// 遍历过程中不接受转移，直到叶子节点才开始接受下一个Fire给出的状态，如果叶子不接受条件，则按照路由返回直到有状态接受或者回退结束
+// 注意细致的不同，遍历过程不接受状态，而遍历回退过程是接受状态的
+
+心得：
+// 这意味着每次进入一个状态机时：
+// HistoryType = Deep都会使该状态机恢复到最新的状态继续执行
+// HistoryType = Shallow都会使该状态机从一个最新子状态，按默认位置（InitialSubState）路由到最内层开始
+// HistoryType = None会一直使该状态机按默认位置（InitialSubState）路由到最内层开始
+
+实验2：
+// 另外同类的状态之间不允许产生父子关系，这意味着类似于A是B和C的父状态，而把B设为C的父状态是不合法的。
+
+实验3：
+// 极端情况：给出一个子类状态：A={B->C->D}类内的转移都是epsilon转移，此时设置起始状态为A，并给出epsilon条件，设置HistoryType = Deep
+// A首先会找到自身，而A类并没有激活过的子状态，此时状态机会默认找A类中的初始状态B（这里是测试出来的特性了）
+// 若B接受epsilon，则转移并消耗条件从而停机（因为只给了一个epsilon)
+// 若B不接受epsilon，则回溯停止，回到A状态上来
+// 若A接受epsilon，则转移
+// 否则停机
+
+//测试代码：
+public class VV
+    {
+        private readonly PassiveStateMachine<States, Events> dd;
+
+        private enum States
+        {
+            A,
+            B,
+            C,
+            D,
+            E,
+            F
+        }
+
+        private enum Events
+        {
+            Epsilon,
+            Trans2C,
+            Trans2D
+        }
+
+        public VV()
+        {
+            var builder = new StateMachineDefinitionBuilder<States, Events>();
+
+            builder.DefineHierarchyOn(States.A)
+                .WithHistoryType(HistoryType.Deep)
+                .WithInitialSubState(States.B)
+                .WithSubState(States.C)
+                .WithSubState(States.D);
+
+            builder.DefineHierarchyOn(States.C)
+                .WithHistoryType(HistoryType.Deep)
+                .WithInitialSubState(States.F);
+
+            // 实验2
+            //builder.DefineHierarchyOn(States.C)
+            //    .WithHistoryType(HistoryType.Deep)
+            //    .WithInitialSubState(States.D);
+
+            builder.In(States.A).ExecuteOnEntry(() => { Console.WriteLine("A"); })
+                .On(Events.Trans2D).Goto(States.B).Execute(() => { Console.WriteLine("A => B"); });
+
+            builder.In(States.B).ExecuteOnEntry(() => { Console.WriteLine("B"); })
+                .On(Events.Epsilon).Goto(States.C).Execute(() => { Console.WriteLine("B => C"); }) ;
+
+            builder.In(States.C).ExecuteOnEntry(() => { Console.WriteLine("C"); })
+                .On(Events.Epsilon).Goto(States.D).Execute(() => { Console.WriteLine("C => D"); });
+
+            builder.In(States.D).ExecuteOnEntry(() => { Console.WriteLine("D"); });
+
+            builder.In(States.E).ExecuteOnEntry(() => { Console.WriteLine("E"); })
+                .On(Events.Trans2C).Goto(States.C).Execute(() => { Console.WriteLine("E => C"); })
+                .On(Events.Trans2D).Goto(States.D).Execute(() => { Console.WriteLine("E => D"); });
+
+            builder.In(States.F).ExecuteOnEntry(() => { Console.WriteLine("F"); });
+
+            builder.WithInitialState(States.E); 
+
+            var definition = builder
+                .Build();
+
+            dd = definition
+                .CreatePassiveStateMachine("ddd");
+
+            dd.Start();
+        }
+
+        public void Test()
+        {
+            this.dd.Fire(Events.Trans2C);
+            this.dd.Fire(Events.Trans2D);
+        }
+    }
